@@ -8,6 +8,7 @@ use std::fs::{File, OpenOptions};
 use std::f32;
 use std::thread;
 use std::sync::{Arc, Barrier, Mutex};
+use std::convert::TryInto;
 /*
 use rand::Rng;
 use std::env;
@@ -36,13 +37,12 @@ fn main() {
     // Calculate pivots
     let pivots = find_pivots(&mut inpf, threads, size);
     
-    /*
     // Create output file
     {
         let mut outf = File::create(out_path).unwrap();
-        let tmp = size.to_bits().to_ne_bytes();
+        let tmp = size.to_ne_bytes();
         outf.write_all(&tmp).unwrap();
-        outf.set_len(size).unwrap();
+        outf.set_len(size*4 + 8).unwrap();
     }
 
     let mut workers = vec![];
@@ -68,13 +68,13 @@ fn main() {
     for tt in workers {
         tt.join().unwrap();
     }
-    */
+    
 }
 
 fn read_size(file: &mut File) -> u64 {
     // TODO: Read size field from data file
     let mut count = [0u8; 8];
-    file.read_exact(&mut count);
+    file.read_exact(&mut count).unwrap();
     let xx = Cursor::new(count).get_u64_le();
     xx
 }
@@ -82,7 +82,7 @@ fn read_size(file: &mut File) -> u64 {
 fn read_item(file: &mut File, ii: u64) -> f32 {
     let mut tmp = [0u8;4];
     file.seek(SeekFrom::Start(8 + ii*4)).unwrap();
-    file.read_exact(&mut tmp);
+    file.read_exact(&mut tmp).unwrap();
     let xx = Cursor::new(tmp).get_f32_le();
     xx
 }
@@ -122,51 +122,87 @@ fn find_pivots(mut file: &mut File, threads: usize, size: u64) -> Vec<f32> {
         i += 3;
         index += 1;
     }
-    pivots[threads] = INFINITY;
-        
+    pivots[threads] = INFINITY;    
     pivots
 }
-/*
+
 fn worker(tid: usize, inp_path: String, out_path: String, pivots: Vec<f32>,
           sizes: Arc<Mutex<Vec<u64>>>, bb: Arc<Barrier>) {
 
-    // TODO: Open input as local fh
+    //Open input as local fh
+    let mut inpf = File::open(inp_path).unwrap();
+    let size = read_size(&mut inpf);
 
-    // TODO: Scan to collect local data
-    let data = vec![0f32, 1f32];
-
-    // TODO: Write local size to shared sizes
+    //Scan to collect local data
+    let mut data = vec![];
+    for i in 0..size
     {
+        let item = read_item(&mut inpf, i);
+        if (item >= pivots[tid]) && (item < pivots[tid+1])
+        {
+            data.push(item);
+        }
+    }
+    //Write local size to shared sizes
+
+    {
+        let mut sizes = sizes.lock().unwrap();
+        sizes[tid] = data.len().try_into().unwrap();
+        //println!("sizes[{}] = {}", tid, sizes[tid]);
         // curly braces to scope our lock guard
     }
 
-    // TODO: Sort local data
+    // Sort local data
+    data.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
-    // Here's our printout
-    println!("{}: start {}, count {}", tid, &data[0], data.len());
-
-    // TODO: Write data to local buffer
+    // Write data to local buffer
     let mut cur = Cursor::new(vec![]);
-
     for xx in &data {
         let tmp = xx.to_bits().to_ne_bytes();
         cur.write_all(&tmp).unwrap();
     }
+    
+    // calculate the start and end index for the current thread
 
-    // TODO: Get position for output file
+    bb.wait();
+    let mut start = 0;
+    //Get position for output file
+
     let prev_count = {
         // curly braces to scope our lock guard
-        5
+        let sizes = sizes.lock().unwrap();
+            for i in 0..tid
+            {
+                start = start + sizes[i];
+            }
+        start
     };
 
-    /*
+
+    // Here's our printout
+    if data.len() != 0 
+    {
+        println!("{}: start {}, count {}", tid, &data[0], data.len());
+    }
+    else
+    {
+        println!("{}: count {}", tid, data.len());
+    }
+
+
     let mut outf = OpenOptions::new()
         .read(true)
         .write(true)
         .open(out_path).unwrap();
+    
+    //Seek and write local buffer.
+    println!("{}: data = {:?}", tid, data);
+    outf.seek(SeekFrom::Start(8 + prev_count)).unwrap();
+    /*
+    for i in 0..data.len()
+    {
+        let tmp = data[i].to_bits().to_ne_bytes();
+        outf.write_all(&tmp).unwrap();
+    }
     */
-    // TODO: Seek and write local buffer.
-
-    // TODO: Figure out where the barrier goes.
 }
-*/
